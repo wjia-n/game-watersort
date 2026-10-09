@@ -384,6 +384,9 @@ class SettingsScreen extends StatelessWidget {
                       EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 ),
                 style: ApothecaryText.bodyInk,
+                // Save on every keystroke: focus loss, tap-outside dismissal,
+                // or the back button can never lose the rename.
+                onChanged: (v) => AppSettings.instance.setPlayerName(v),
                 onSubmitted: (_) {
                   AppSettings.instance.setPlayerName(ctrl.text);
                   ApothecaryAudio.instance.pop();

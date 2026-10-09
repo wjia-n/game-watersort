@@ -9,20 +9,30 @@ import '../engine.dart';
 import '../levels.dart';
 import '../progress.dart';
 import '../settings.dart';
+import '../themes.dart';
 import '../widgets/brass.dart';
 import '../widgets/cabinet.dart';
 import '../widgets/vial_widget.dart';
 
 /// Apothecary gameplay screen: brass HUD, vials on carved walnut shelves,
 /// pour animation with weight, pause / victory overlays.
+///
+/// Stuck-state safety (exemplar pattern): the engine owns ALL game state and
+/// every pour is atomic (state snaps to the post-pour result); a watchdog
+/// timer recovers the animation layer if a pour ever ends without its
+/// controller settling; input is locked during pours (no double counting).
 class GameScreen extends StatefulWidget {
   final int level;
+  final List<List<List<int>>> levels;
+  final bool master;
   final VoidCallback onExit;
   final void Function(int nextLevel) onNextLevel;
 
   const GameScreen({
     super.key,
     required this.level,
+    required this.levels,
+    required this.master,
     required this.onExit,
     required this.onNextLevel,
   });
@@ -71,6 +81,11 @@ class _GameScreenState extends State<GameScreen>
   List<int> _animFromUnits = const [];
   List<int> _animToUnits = const [];
   AnimationController? _pourCtrl;
+  int _lastLanded = 0;
+
+  // vial-completion celebration
+  int _celebrateIndex = -1;
+  late AnimationController _celebrateCtrl;
 
   // invalid shake
   int _shakeIndex = -1;
@@ -80,13 +95,19 @@ class _GameScreenState extends State<GameScreen>
   int _hintFrom = -1, _hintTo = -1;
   Timer? _hintTimer;
 
+  // watchdog: recovers the animation layer if a pour ever desyncs.
+  Timer? _watchdog;
+
   bool _paused = false;
   bool _pauseDialogOpen = false;
   bool _over = false;
+  bool _winShown = false;
   int _addVialUses = 1;
   int _extraVials = 0;
   int _stars = 0;
   bool _perfect = false;
+
+  ApothecaryThemeDef get _t => AppSettings.instance.theme;
 
   @override
   void initState() {
@@ -95,15 +116,32 @@ class _GameScreenState extends State<GameScreen>
     _shakeCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 420));
     _shakeCtrl.addListener(() => setState(() {}));
+    _celebrateCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 650));
+    _celebrateCtrl.addListener(() => setState(() {}));
     _startLevel(widget.level);
-    ApothecaryAudio.instance.playMusic('music_game.wav');
+    ApothecaryAudio.instance.startGameMusic();
+    // Watchdog: if a pour animation ever ends without settling (missed
+    // status callback, disposed controller, lifecycle edge), snap the
+    // animation layer to the engine's authoritative post-pour state.
+    _watchdog = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      if (!mounted) return;
+      if (_pouring && (_pourCtrl == null || !_pourCtrl!.isAnimating)) {
+        _finishPour(instant: true);
+      }
+      if (_engine.isWon && !_winShown && !_over) {
+        _onWin();
+      }
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _watchdog?.cancel();
     _pourCtrl?.dispose();
     _shakeCtrl.dispose();
+    _celebrateCtrl.dispose();
     _hintTimer?.cancel();
     super.dispose();
   }
@@ -111,6 +149,8 @@ class _GameScreenState extends State<GameScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
+      // Pour state is deterministic: snap to the post-pour result, then
+      // pause. Music pauses via the app-level lifecycle hook.
       if (_pouring) _finishPour(instant: true);
       _showPause();
     }
@@ -132,18 +172,20 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _startLevel(int level) {
-    _engine = WaterSortEngine(kLevels[level]);
-    _par = parForLevel(kLevels[level]);
+    _engine = WaterSortEngine(widget.levels[level]);
+    _par = parForLevel(widget.levels[level]);
     _selected = -1;
     _lastFrom = _lastTo = null;
     _pouring = false;
     _over = false;
+    _winShown = false;
     _paused = false;
     _stars = 0;
     _perfect = false;
     _extraVials = 0;
     _addVialUses = AppSettings.instance.addVialUsesPerLevel;
     _hintFrom = _hintTo = -1;
+    _celebrateIndex = -1;
     ApothecaryAudio.instance.start();
   }
 
@@ -163,7 +205,7 @@ class _GameScreenState extends State<GameScreen>
     if (_selected == -1) {
       if (_engine.vials[i].isEmpty) return; // nothing to lift
       if (_engine.isCompleteVial(i)) {
-        // RULES.md §4.4 / test #3: locked vials reject selection
+        // RULES.md §4.4 / §7: locked vials reject selection as source.
         _engine.illegalAttempts++;
         _invalidFeedback(i);
         return;
@@ -205,12 +247,13 @@ class _GameScreenState extends State<GameScreen>
     _animFromUnits = List<int>.of(_engine.vials[s]);
     _animToUnits = List<int>.of(_engine.vials[d]);
     _pourColor = _engine.vials[s].last;
-    _engine.pour(s, d); // state -> final; visuals interpolate below
+    _engine.pour(s, d); // engine state -> final; visuals interpolate below
     _lastFrom = s;
     _lastTo = d;
     _pourFrom = s;
     _pourTo = d;
     _pourUnits = n;
+    _lastLanded = 0;
     _buzz();
     setState(() => _pouring = true);
     _pourCtrl?.dispose();
@@ -231,8 +274,6 @@ class _GameScreenState extends State<GameScreen>
     return (((p - 0.22) / 0.63) * _pourUnits).floor().clamp(0, _pourUnits);
   }
 
-  int _lastLanded = 0;
-
   void _onPourTick() {
     final landed = _landedUnits();
     if (landed > _lastLanded) {
@@ -251,9 +292,15 @@ class _GameScreenState extends State<GameScreen>
       _pouring = false;
       _lastLanded = 0;
     });
+    // Vial-completion celebration: the destination just sealed itself.
+    if (_engine.isCompleteVial(_pourTo)) {
+      _celebrateIndex = _pourTo;
+      _celebrateCtrl.forward(from: 0);
+      ApothecaryAudio.instance.pop();
+      _buzz(true);
+    }
     if (_engine.isWon) {
-      Future.delayed(
-          Duration(milliseconds: instant ? 50 : 350), _onWin);
+      Future.delayed(Duration(milliseconds: instant ? 50 : 350), _onWin);
     }
   }
 
@@ -318,11 +365,13 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _showNote(String msg) {
+    final t = _t;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg, style: ApothecaryText.bodyInk),
-        backgroundColor: Apothecary.parchment,
+        content: Text(msg,
+            style: ApothecaryText.engraved(13, color: t.ink)),
+        backgroundColor: t.parchment,
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
       ),
@@ -330,7 +379,8 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Future<void> _onWin() async {
-    if (_over || !mounted) return;
+    if (_winShown || !mounted) return;
+    _winShown = true;
     setState(() => _over = true);
     _stars = WaterSortEngine.starsFor(_engine.moves, _par);
     _perfect = _engine.undosUsed == 0 && _engine.illegalAttempts == 0;
@@ -339,9 +389,16 @@ class _GameScreenState extends State<GameScreen>
     await audio.pop();
     if (_stars == 3) await audio.chime();
     final progress = ProgressStore.instance;
-    await progress.recordCompletion(widget.level, _stars, _perfect);
-    if (widget.level + 1 < kLevels.length) {
-      await progress.setCurrent(widget.level + 1);
+    if (widget.master) {
+      await progress.recordMasterCompletion(widget.level, _stars, _perfect);
+      if (widget.level + 1 < widget.levels.length) {
+        await progress.setMasterCurrent(widget.level + 1);
+      }
+    } else {
+      await progress.recordCompletion(widget.level, _stars, _perfect);
+      if (widget.level + 1 < widget.levels.length) {
+        await progress.setCurrent(widget.level + 1);
+      }
     }
     if (!mounted) return;
     showDialog(
@@ -354,14 +411,16 @@ class _GameScreenState extends State<GameScreen>
   // ---------------- build ----------------
   @override
   Widget build(BuildContext context) {
+    final t = _t;
     return CabinetBackground(
+      theme: t,
       child: SafeArea(
         child: Column(
           children: [
-            _hud(),
+            _hud(t),
             const SizedBox(height: 4),
-            Expanded(child: _boardArea()),
-            _actionBar(),
+            Expanded(child: _boardArea(t)),
+            _actionBar(t),
             const SizedBox(height: 10),
           ],
         ),
@@ -369,27 +428,29 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _hud() {
+  Widget _hud(ApothecaryThemeDef t) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
       child: Row(
         children: [
           BrassPlate(
-            child: Text('Nº ${widget.level + 1}',
-                style: ApothecaryText.engraved(15)),
+            theme: t,
+            child: Text(
+                '${widget.master ? 'M' : 'Nº'} ${widget.level + 1}',
+                style: ApothecaryText.engraved(15, color: t.ink)),
           ),
           const SizedBox(width: 8),
           BrassPlate(
+            theme: t,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text('${_engine.moves}',
-                    style: ApothecaryText.plate(15)),
+                    style: ApothecaryText.plate(15, color: t.parchment)),
                 const SizedBox(width: 6),
                 Text('MOVES',
                     style: ApothecaryText.plate(10,
-                        color: Apothecary.inkBrown
-                            .withValues(alpha: 0.75))),
+                        color: t.parchment.withValues(alpha: 0.75))),
               ],
             ),
           ),
@@ -397,6 +458,7 @@ class _GameScreenState extends State<GameScreen>
           BrassIconButton(
               icon: Icons.pause,
               size: 44,
+              theme: t,
               onTap: _pouring || _over
                   ? null
                   : () {
@@ -408,28 +470,28 @@ class _GameScreenState extends State<GameScreen>
           BrassIconButton(
               icon: Icons.refresh,
               size: 44,
+              theme: t,
               onTap: _pouring || _over ? null : _restart),
         ],
       ),
     );
   }
 
-  Widget _boardArea() {
+  Widget _boardArea(ApothecaryThemeDef t) {
     return LayoutBuilder(
       builder: (context, c) {
-        final geom = _BoardGeom(
-            c.maxWidth, c.maxHeight, _engine.vialCount);
+        final geom = _BoardGeom(c.maxWidth, c.maxHeight, _engine.vialCount);
         return Stack(
           children: [
             // carved shelf planks
             for (var r = 0; r < geom.rows; r++)
               Positioned.fromRect(
                 rect: geom.shelfRect(r),
-                child: CustomPaint(painter: _ShelfPainter()),
+                child: CustomPaint(painter: _ShelfPainter(t.shelf)),
               ),
             // vials
             for (var i = 0; i < _engine.vialCount; i++)
-              _positionedVial(geom, i),
+              _positionedVial(geom, i, t),
             // pour stream overlay
             if (_pouring && _pourCtrl != null)
               Positioned.fill(
@@ -439,6 +501,7 @@ class _GameScreenState extends State<GameScreen>
                     to: _mouth(geom, _pourTo, false),
                     progress: _pourCtrl!.value,
                     colorIdx: _pourColor,
+                    palette: t.palette,
                   ),
                 ),
               ),
@@ -466,7 +529,8 @@ class _GameScreenState extends State<GameScreen>
     return 1.0;
   }
 
-  Widget _positionedVial(_BoardGeom geom, int i) {
+  Widget _positionedVial(
+      _BoardGeom geom, int i, ApothecaryThemeDef t) {
     final c = geom.vialCenter(i);
     // visual unit counts (interpolated during pour)
     List<int> units = _engine.vials[i];
@@ -490,14 +554,21 @@ class _GameScreenState extends State<GameScreen>
     if (selected) dy = -18;
     if (_pouring && i == _pourFrom) {
       final dir = (_pourTo > _pourFrom) ? 1.0 : -1.0;
-      final t = _tiltAmount();
-      dy = -26 * t;
-      dx = dir * geom.vialW * 0.42 * t;
-      rot = dir * 0.5 * t;
+      final tilt = _tiltAmount();
+      dy = -26 * tilt;
+      dx = dir * geom.vialW * 0.42 * tilt;
+      rot = dir * 0.5 * tilt;
     }
     if (i == _shakeIndex && _shakeCtrl.isAnimating) {
       final p = _shakeCtrl.value;
       dx += sin(p * pi * 3) * 9 * (1 - p);
+    }
+
+    // completion celebration: scale pulse + rising sparkles
+    var scale = 1.0;
+    if (i == _celebrateIndex && _celebrateCtrl.isAnimating) {
+      final p = _celebrateCtrl.value;
+      scale = 1 + 0.18 * sin(pi * p.clamp(0.0, 1.0));
     }
 
     return Positioned(
@@ -510,21 +581,42 @@ class _GameScreenState extends State<GameScreen>
           child: Transform.rotate(
             angle: rot,
             alignment: const Alignment(0, -0.9),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              padding: hinted ? const EdgeInsets.all(3) : EdgeInsets.zero,
-              decoration: hinted
-                  ? BoxDecoration(
-                      border: Border.all(
-                          color: Apothecary.brassLight, width: 2.5),
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: VialWidget(
-                units: units,
-                width: geom.vialW,
-                height: geom.vialH,
-                locked: locked,
+            child: Transform.scale(
+              scale: scale,
+              child: Stack(
+                alignment: Alignment.topCenter,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    padding:
+                        hinted ? const EdgeInsets.all(3) : EdgeInsets.zero,
+                    decoration: hinted
+                        ? BoxDecoration(
+                            border: Border.all(
+                                color: t.metalLight, width: 2.5),
+                            borderRadius: BorderRadius.circular(12),
+                          )
+                        : null,
+                    child: VialWidget(
+                      units: units,
+                      width: geom.vialW,
+                      height: geom.vialH,
+                      locked: locked,
+                      palette: t.palette,
+                      glass: t.glass,
+                    ),
+                  ),
+                  if (i == _celebrateIndex && _celebrateCtrl.isAnimating)
+                    Positioned(
+                      top: -8 - 26 * _celebrateCtrl.value,
+                      child: Opacity(
+                        opacity: 1 - _celebrateCtrl.value,
+                        child: Text('✦ SEALED ✦',
+                            style: ApothecaryText.engraved(11,
+                                color: t.metalLight)),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -533,7 +625,7 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _actionBar() {
+  Widget _actionBar(ApothecaryThemeDef t) {
     final canAdd = _extraVials < 2 && _addVialUses > 0;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
@@ -541,6 +633,7 @@ class _GameScreenState extends State<GameScreen>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           ParchmentTag(
+            theme: t,
             label: 'Undo',
             icon: Icons.undo,
             onTap: _engine.canUndo && !_pouring && !_over && !_paused
@@ -557,17 +650,13 @@ class _GameScreenState extends State<GameScreen>
                 padding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
+                  gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      Apothecary.brassLight,
-                      Apothecary.brassDeep
-                    ],
+                    colors: [t.metalLight, t.metalDeep],
                   ),
                   borderRadius: BorderRadius.circular(10),
-                  border:
-                      Border.all(color: Apothecary.brassBorder, width: 1.5),
+                  border: Border.all(color: t.metalBorder, width: 1.5),
                   boxShadow: const [
                     BoxShadow(
                         color: Color(0x66000000),
@@ -578,11 +667,10 @@ class _GameScreenState extends State<GameScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.restaurant_menu,
-                        size: 18, color: Apothecary.inkBrown),
+                    Icon(Icons.restaurant_menu, size: 18, color: t.ink),
                     const SizedBox(width: 6),
                     Text('HINT',
-                        style: ApothecaryText.engraved(12)),
+                        style: ApothecaryText.engraved(12, color: t.ink)),
                   ],
                 ),
               ),
@@ -590,6 +678,7 @@ class _GameScreenState extends State<GameScreen>
           ),
           const SizedBox(width: 10),
           ParchmentTag(
+            theme: t,
             label: _addVialUses > 0
                 ? 'Add Vial ($_addVialUses)'
                 : 'Add Vial',
@@ -602,18 +691,22 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Widget _pauseCard() {
+    final t = _t;
     return Dialog(
       backgroundColor: Colors.transparent,
       child: ParchmentCard(
+        theme: t,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('PAUSED', style: ApothecaryText.engraved(24)),
+            Text('PAUSED',
+                style: ApothecaryText.engraved(24, color: t.ink)),
             const SizedBox(height: 6),
             Text('The tinctures wait patiently.',
                 style: ApothecaryText.bodyInk.copyWith(fontSize: 13)),
             const SizedBox(height: 16),
             BrassButton(
+              theme: t,
               label: 'Resume',
               onTap: () {
                 ApothecaryAudio.instance.click();
@@ -625,6 +718,7 @@ class _GameScreenState extends State<GameScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 ParchmentTag(
+                    theme: t,
                     label: 'Restart',
                     icon: Icons.refresh,
                     onTap: () {
@@ -633,6 +727,7 @@ class _GameScreenState extends State<GameScreen>
                     }),
                 const SizedBox(width: 10),
                 ParchmentTag(
+                    theme: t,
                     label: 'Cabinet',
                     icon: Icons.home,
                     onTap: () {
@@ -649,17 +744,25 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Widget _victoryCard() {
-    final isLast = widget.level + 1 >= kLevels.length;
+    final t = _t;
+    final isLast = widget.level + 1 >= widget.levels.length;
     return Dialog(
       backgroundColor: Colors.transparent,
       child: ParchmentCard(
+        theme: t,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('RECIPE COMPLETE',
                 textAlign: TextAlign.center,
-                style: ApothecaryText.engraved(24)),
+                style: ApothecaryText.engraved(24, color: t.ink)),
+            const SizedBox(height: 6),
+            Text(
+                '${AppSettings.instance.playerName} bottled every tincture.',
+                textAlign: TextAlign.center,
+                style: ApothecaryText.bodyInk.copyWith(fontSize: 13)),
             const SizedBox(height: 10),
+            // star seals pop in with staggered scale animation
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -667,14 +770,14 @@ class _GameScreenState extends State<GameScreen>
                   Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 4),
-                    child: StarSeal(earned: _stars > s, size: 52),
+                    child: _PoppingStar(
+                        earned: _stars > s, delayMs: s * 220, theme: t),
                   ),
               ],
             ),
             const SizedBox(height: 10),
             Text('${_engine.moves} moves  ·  par $_par',
-                style: ApothecaryText.plate(14,
-                    color: Apothecary.inkBrown)),
+                style: ApothecaryText.plate(14, color: t.ink)),
             if (_perfect)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -682,16 +785,18 @@ class _GameScreenState extends State<GameScreen>
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 5),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Apothecary.brassBorder),
+                    border: Border.all(color: t.metalBorder),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text('✦ PERFECT POUR ✦',
-                      style: ApothecaryText.engraved(12)),
+                      style:
+                          ApothecaryText.engraved(12, color: t.ink)),
                 ),
               ),
             const SizedBox(height: 16),
             if (!isLast)
               BrassButton(
+                theme: t,
                 label: 'Next Recipe',
                 onTap: () {
                   ApothecaryAudio.instance.click();
@@ -709,6 +814,7 @@ class _GameScreenState extends State<GameScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 ParchmentTag(
+                    theme: t,
                     label: 'Replay',
                     icon: Icons.replay,
                     onTap: () {
@@ -718,6 +824,7 @@ class _GameScreenState extends State<GameScreen>
                     }),
                 const SizedBox(width: 10),
                 ParchmentTag(
+                    theme: t,
                     label: 'Cabinet',
                     icon: Icons.home,
                     onTap: () {
@@ -734,14 +841,68 @@ class _GameScreenState extends State<GameScreen>
   }
 }
 
+/// Star seal that pops in with a staggered scale animation on victory.
+class _PoppingStar extends StatefulWidget {
+  final bool earned;
+  final int delayMs;
+  final ApothecaryThemeDef theme;
+  const _PoppingStar(
+      {required this.earned, required this.delayMs, required this.theme});
+
+  @override
+  State<_PoppingStar> createState() => _PoppingStarState();
+}
+
+class _PoppingStarState extends State<_PoppingStar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 380));
+    Future.delayed(Duration(milliseconds: widget.delayMs), () {
+      if (!mounted) return;
+      _c.forward();
+      if (widget.earned) ApothecaryAudio.instance.pop();
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, _) {
+        final p = _c.value;
+        final scale = p < 0.6 ? 0.3 + 1.4 * p : 1.14 - 0.14 * (p - 0.6) / 0.4;
+        return Transform.scale(
+          scale: scale.clamp(0.0, 2.0),
+          child: Opacity(
+            opacity: p.clamp(0.0, 1.0),
+            child: StarSeal(earned: widget.earned, size: 52, theme: widget.theme),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Carved walnut shelf plank with inner-shadow mortise and slots.
 class _ShelfPainter extends CustomPainter {
+  final Color shelf;
+  _ShelfPainter(this.shelf);
   @override
   void paint(Canvas canvas, Size size) {
     final plank = RRect.fromRectAndRadius(
         Offset.zero & size, const Radius.circular(8));
-    canvas.drawRRect(
-        plank, Paint()..color = const Color(0xFF1E130B));
+    canvas.drawRRect(plank, Paint()..color = shelf);
     // top edge highlight (carved lip catches candlelight)
     canvas.drawLine(
       const Offset(6, 2),
@@ -761,7 +922,7 @@ class _ShelfPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _ShelfPainter old) => old.shelf != shelf;
 }
 
 /// Liquid stream with weight: tapered bezier + falling droplet.
@@ -769,12 +930,14 @@ class _StreamPainter extends CustomPainter {
   final Offset from, to;
   final double progress;
   final int colorIdx;
+  final LiquidPalette palette;
 
   _StreamPainter({
     required this.from,
     required this.to,
     required this.progress,
     required this.colorIdx,
+    required this.palette,
   });
 
   @override
@@ -808,14 +971,12 @@ class _StreamPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = width
         ..strokeCap = StrokeCap.round
-        ..color = Apothecary.liquid(colorIdx).withValues(alpha: 0.92),
+        ..color = palette.of(colorIdx).withValues(alpha: 0.92),
     );
     // droplet at the leading edge
     if (prev != null && t < 0.98) {
       canvas.drawCircle(
-          prev,
-          width * 0.55,
-          Paint()..color = Apothecary.liquidLight(colorIdx));
+          prev, width * 0.55, Paint()..color = palette.light(colorIdx));
     }
   }
 
@@ -829,5 +990,8 @@ class _StreamPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _StreamPainter old) =>
-      old.progress != progress || old.from != from || old.to != to;
+      old.progress != progress ||
+      old.from != from ||
+      old.to != to ||
+      old.palette != palette;
 }

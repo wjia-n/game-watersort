@@ -1,12 +1,15 @@
-import 'levels.dart';
+/// Pure, deterministic Water Sort engine. Implements RULES.md exactly:
+///
+/// - pour = top contiguous run, partial pours when the destination is tight
+/// - completed (locked) vials can never be a pour source
+/// - unlimited undo, one snapshot per pour
+///
+/// Vial capacity shared by the engine and level definitions.
+const kCapacity = 4;
 
 /// Result of a pour attempt.
 enum PourOutcome { ok, emptySource, fullDest, colorMismatch, lockedSource, sameVial }
 
-/// Pure, deterministic Water Sort engine. Implements RULES.md exactly:
-/// - pour = top contiguous run, partial pours when the destination is tight
-/// - completed (locked) vials can never be a pour source
-/// - unlimited undo, one snapshot per pour
 class WaterSortEngine {
   final List<List<int>> initial;
   late List<List<int>> vials;
@@ -79,8 +82,8 @@ class WaterSortEngine {
       illegalAttempts++;
       return 0;
     }
+    // Undo is unlimited per RULES.md §7 — no cap on the history stack.
     _history.add(_snapshot());
-    if (_history.length > 200) _history.removeAt(0);
     for (var k = 0; k < n; k++) {
       vials[d].add(vials[s].removeLast());
     }
@@ -159,4 +162,147 @@ class WaterSortEngine {
     if (moves <= (par * 1.25).ceil()) return 2;
     return 1;
   }
+
+  // ---------------- solver (RULES.md §11) ----------------
+  /// Best-first search over legal pours (§4), used to verify that a level
+  /// shuffle is solvable (generator validation) and to back the hint engine.
+  ///
+  /// - Symmetry pruning: pouring into any of several identical empty tubes
+  ///   is one move (only the first empty tube is a legal destination).
+  /// - Run-normalization: states are canonicalized (tube order irrelevant).
+  /// - Returns the solution length in plies, or -1 if none was found within
+  ///   [cap] plies or [stateCap] visited states.
+  static int solvePlies(List<List<int>> level,
+      {int cap = 400, int stateCap = 600000}) {
+    bool goal(List<List<int>> st) {
+      for (final v in st) {
+        if (v.isEmpty) continue;
+        if (v.length != kCapacity || v.any((u) => u != v.first)) return false;
+      }
+      return true;
+    }
+
+    String key(List<List<int>> st) {
+      final tubes = st.map((v) => v.join(',')).toList()..sort();
+      return tubes.join('|');
+    }
+
+    int heuristic(List<List<int>> st) {
+      // 4 plies per incomplete color: optimistic but effective ordering.
+      final colors = <int>{};
+      for (final v in st) {
+        colors.addAll(v);
+      }
+      var incomplete = 0;
+      for (final c in colors) {
+        var total = 0;
+        var inCompleteTube = false;
+        for (final v in st) {
+          if (v.isNotEmpty && v.every((u) => u == c)) total += v.length;
+          if (v.length == kCapacity && v.every((u) => u == c)) {
+            inCompleteTube = true;
+          }
+        }
+        if (!inCompleteTube && total > 0) incomplete++;
+      }
+      return incomplete * 4;
+    }
+
+    final start = level.map((v) => List<int>.of(v)).toList();
+    if (goal(start)) return 0;
+    final seen = <String>{key(start)};
+    // Minimal binary heap on (depth + heuristic).
+    final heap = <_SearchNode>[];
+    void push(_SearchNode n) {
+      heap.add(n);
+      var i = heap.length - 1;
+      while (i > 0) {
+        final p = (i - 1) >> 1;
+        if (heap[p].f <= heap[i].f) break;
+        final t = heap[p];
+        heap[p] = heap[i];
+        heap[i] = t;
+        i = p;
+      }
+    }
+
+    _SearchNode pop() {
+      final top = heap.first;
+      final last = heap.removeLast();
+      if (heap.isNotEmpty) {
+        heap[0] = last;
+        var i = 0;
+        for (;;) {
+          final l = i * 2 + 1, r = l + 1;
+          var m = i;
+          if (l < heap.length && heap[l].f < heap[m].f) m = l;
+          if (r < heap.length && heap[r].f < heap[m].f) m = r;
+          if (m == i) break;
+          final t = heap[m];
+          heap[m] = heap[i];
+          heap[i] = t;
+          i = m;
+        }
+      }
+      return top;
+    }
+
+    push(_SearchNode(0 + heuristic(start), 0, start));
+    var visited = 0;
+    while (heap.isNotEmpty) {
+      final node = pop();
+      if (node.depth >= cap) continue;
+      final st = node.state;
+      // Enumerate legal pours.
+      for (var s = 0; s < st.length; s++) {
+        final src = st[s];
+        if (src.isEmpty) continue;
+        if (src.length == kCapacity && src.every((u) => u == src.first)) {
+          continue; // locked source (§4.4 / §7)
+        }
+        // top run
+        final color = src.last;
+        var run = 0;
+        for (var k = src.length - 1; k >= 0 && src[k] == color; k--) {
+          run++;
+        }
+        var usedEmpty = false;
+        for (var d = 0; d < st.length; d++) {
+          if (d == s) continue;
+          final dst = st[d];
+          if (dst.length >= kCapacity) continue;
+          if (dst.isEmpty) {
+            if (usedEmpty) continue; // symmetry pruning
+            usedEmpty = true;
+          } else if (dst.last != color) {
+            continue;
+          }
+          final n = run < kCapacity - dst.length ? run : kCapacity - dst.length;
+          final next = st.map((v) => List<int>.of(v)).toList();
+          for (var k = 0; k < n; k++) {
+            next[d].add(next[s].removeLast());
+          }
+          final depth = node.depth + 1;
+          if (goal(next)) return depth;
+          final k = key(next);
+          if (seen.add(k)) {
+            if (++visited > stateCap) return -1;
+            push(_SearchNode(depth + heuristic(next), depth, next));
+          }
+        }
+      }
+    }
+    return -1;
+  }
+
+  /// Convenience: is this level solvable within the search budget?
+  static bool isSolvable(List<List<int>> level) => solvePlies(level) >= 0;
+}
+
+/// Search node for the best-first solver.
+class _SearchNode {
+  final int f; // depth + heuristic
+  final int depth;
+  final List<List<int>> state;
+  _SearchNode(this.f, this.depth, this.state);
 }

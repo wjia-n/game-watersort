@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watersort/engine.dart';
 import 'package:watersort/levels.dart';
+import 'package:watersort/themes.dart';
 
 /// RULES.md §13 test cases against the engine.
 void main() {
@@ -142,7 +143,7 @@ void main() {
 
   test('every bundled level is solvable-shaped: colors x4 each, >=1 empty',
       () {
-    for (final level in kLevels) {
+    for (final level in [...kLevels, ...kMasterLevels]) {
       final counts = <int, int>{};
       var empties = 0;
       var complete = 0;
@@ -164,5 +165,70 @@ void main() {
         expect(c, 4);
       }
     }
+  });
+
+  test('solver completes every bundled level (RULES.md §11.5)', () {
+    for (var i = 0; i < kLevels.length; i++) {
+      final plies = WaterSortEngine.solvePlies(kLevels[i]);
+      expect(plies, greaterThan(0), reason: 'classic level $i unsolvable');
+    }
+  });
+
+  test('solver completes every master level (RULES.md §11.5)', () {
+    for (var i = 0; i < kMasterLevels.length; i++) {
+      final plies = WaterSortEngine.solvePlies(kMasterLevels[i]);
+      expect(plies, greaterThan(0), reason: 'master level $i unsolvable');
+    }
+  }, timeout: const Timeout(Duration(minutes: 5)));
+
+  test('generator is deterministic and emits solvable shuffles', () {
+    final a = generateLevel(colors: 6, seed: 42);
+    final b = generateLevel(colors: 6, seed: 42);
+    expect(a, b);
+    final counts = <int, int>{};
+    var empties = 0;
+    for (final v in a) {
+      if (v.isEmpty) {
+        empties++;
+        continue;
+      }
+      expect(v.length, kCapacity);
+      for (final u in v) {
+        counts[u] = (counts[u] ?? 0) + 1;
+      }
+    }
+    expect(empties, 2);
+    expect(counts.length, 6);
+    for (final c in counts.values) {
+      expect(c, 4);
+    }
+    expect(WaterSortEngine.isSolvable(a), isTrue);
+  });
+
+  test('theme catalogs meet the breadth bar', () {
+    expect(ApothecaryThemes.all.length, greaterThanOrEqualTo(12));
+    expect(LiquidPalettes.all.length, greaterThanOrEqualTo(8));
+    expect(GlassStyle.values.length, greaterThanOrEqualTo(3));
+    expect(ApothecaryThemes.freeIds.length, 4);
+    expect(LiquidPalettes.freeIds.length, 2);
+    for (final p in LiquidPalettes.all) {
+      expect(p.colors.length, 8);
+    }
+    // Every theme resolves a palette and a glass style.
+    for (final t in ApothecaryThemes.all) {
+      expect(t.palette.colors.length, 8);
+      expect(GlassStyle.values, contains(t.glass));
+    }
+    // Custom blend resolution.
+    final custom = ApothecaryThemes.custom(
+      name: 'Mine',
+      baseId: 'classic',
+      paletteId: 'berry',
+      glassId: 'flask',
+    );
+    expect(custom.name, 'Mine');
+    expect(custom.paletteId, 'berry');
+    expect(custom.glassId, 'flask');
+    expect(custom.bg, ApothecaryThemes.byId('classic').bg);
   });
 }

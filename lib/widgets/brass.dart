@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../apothecary.dart';
+import '../themes.dart';
 
-/// Tarnished-brass push button: brass face, 1px engraved border, pressed =
+/// Theme-aware brass & parchment widgets. Every widget accepts an optional
+/// [ApothecaryThemeDef] and falls back to the classic walnut/brass cabinet.
+
+ApothecaryThemeDef _th(ApothecaryThemeDef? t) =>
+    t ?? ApothecaryThemes.byId('classic');
+
+/// Tarnished-brass push button: metal face, 1px engraved border, pressed =
 /// inset shadow (physical resistance), never a glow.
 class BrassButton extends StatefulWidget {
   final String label;
   final VoidCallback? onTap;
   final double fontSize;
   final EdgeInsetsGeometry padding;
+  final ApothecaryThemeDef? theme;
 
   const BrassButton({
     super.key,
@@ -16,6 +24,7 @@ class BrassButton extends StatefulWidget {
     required this.onTap,
     this.fontSize = 17,
     this.padding = const EdgeInsets.symmetric(horizontal: 34, vertical: 15),
+    this.theme,
   });
 
   @override
@@ -27,6 +36,7 @@ class _BrassButtonState extends State<BrassButton> {
 
   @override
   Widget build(BuildContext context) {
+    final t = _th(widget.theme);
     final enabled = widget.onTap != null;
     return GestureDetector(
       onTapDown: enabled ? (_) => setState(() => _pressed = true) : null,
@@ -45,25 +55,24 @@ class _BrassButtonState extends State<BrassButton> {
           padding: widget.padding,
           decoration: BoxDecoration(
             gradient: _pressed
-                ? const LinearGradient(
+                ? LinearGradient(
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
-                    colors: [Apothecary.brassDeep, Apothecary.brassLight],
+                    colors: [t.metalDeep, t.metalLight],
                   )
-                : const LinearGradient(
+                : LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Apothecary.brassLight, Apothecary.brassDeep],
+                    colors: [t.metalLight, t.metalDeep],
                   ),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Apothecary.brassBorder, width: 1.5),
+            border: Border.all(color: t.metalBorder, width: 1.5),
             boxShadow: _pressed
                 ? [
                     const BoxShadow(
                       color: Color(0x88000000),
                       blurRadius: 2,
                       offset: Offset(0, 1),
-                      // pressed: inset feel via dark top shade
                     ),
                     const BoxShadow(
                       color: Color(0x55000000),
@@ -88,7 +97,7 @@ class _BrassButtonState extends State<BrassButton> {
           child: Text(
             widget.label.toUpperCase(),
             textAlign: TextAlign.center,
-            style: ApothecaryText.engraved(widget.fontSize),
+            style: ApothecaryText.engraved(widget.fontSize, color: t.ink),
           ),
         ),
       ),
@@ -101,16 +110,19 @@ class BrassIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
   final double size;
+  final ApothecaryThemeDef? theme;
 
   const BrassIconButton({
     super.key,
     required this.icon,
     required this.onTap,
     this.size = 46,
+    this.theme,
   });
 
   @override
   Widget build(BuildContext context) {
+    final t = _th(theme);
     final enabled = onTap != null;
     return GestureDetector(
       onTap: onTap,
@@ -121,18 +133,18 @@ class BrassIconButton extends StatelessWidget {
           height: size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Apothecary.brassLight, Apothecary.brassDeep],
+              colors: [t.metalLight, t.metalDeep],
             ),
-            border: Border.all(color: Apothecary.brassBorder, width: 1.5),
+            border: Border.all(color: t.metalBorder, width: 1.5),
             boxShadow: const [
               BoxShadow(
                   color: Color(0x99000000), blurRadius: 5, offset: Offset(0, 3)),
             ],
           ),
-          child: Icon(icon, color: Apothecary.inkBrown, size: size * 0.48),
+          child: Icon(icon, color: t.ink, size: size * 0.48),
         ),
       ),
     );
@@ -144,22 +156,25 @@ class ParchmentCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
   final double radius;
+  final ApothecaryThemeDef? theme;
 
   const ParchmentCard({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(16),
     this.radius = 12,
+    this.theme,
   });
 
   @override
   Widget build(BuildContext context) {
+    final t = _th(theme);
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: Apothecary.parchment,
+        color: t.parchment,
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: const Color(0xFFB89B62), width: 1),
+        border: Border.all(color: t.parchmentDim, width: 1),
         boxShadow: const [
           BoxShadow(
             color: Color(0x80000000),
@@ -179,6 +194,7 @@ class ParchmentTag extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
   final bool highlighted;
+  final ApothecaryThemeDef? theme;
 
   const ParchmentTag({
     super.key,
@@ -186,10 +202,12 @@ class ParchmentTag extends StatelessWidget {
     required this.icon,
     required this.onTap,
     this.highlighted = false,
+    this.theme,
   });
 
   @override
   Widget build(BuildContext context) {
+    final t = _th(theme);
     final enabled = onTap != null;
     return GestureDetector(
       onTap: onTap,
@@ -200,13 +218,11 @@ class ParchmentTag extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
             color: highlighted
-                ? Apothecary.brassLight.withValues(alpha: 0.35)
-                : Apothecary.parchment,
+                ? t.metalLight.withValues(alpha: 0.35)
+                : t.parchment,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: highlighted
-                  ? Apothecary.brassBorder
-                  : const Color(0xFFB89B62),
+              color: highlighted ? t.metalBorder : t.parchmentDim,
               width: highlighted ? 2 : 1,
             ),
             boxShadow: const [
@@ -217,10 +233,10 @@ class ParchmentTag extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18, color: Apothecary.inkBrown),
+              Icon(icon, size: 18, color: t.ink),
               const SizedBox(width: 6),
               Text(label.toUpperCase(),
-                  style: ApothecaryText.engraved(12)),
+                  style: ApothecaryText.engraved(12, color: t.ink)),
             ],
           ),
         ),
@@ -233,11 +249,14 @@ class ParchmentTag extends StatelessWidget {
 class BrassToggle extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
+  final ApothecaryThemeDef? theme;
 
-  const BrassToggle({super.key, required this.value, required this.onChanged});
+  const BrassToggle(
+      {super.key, required this.value, required this.onChanged, this.theme});
 
   @override
   Widget build(BuildContext context) {
+    final t = _th(theme);
     return GestureDetector(
       onTap: () => onChanged(!value),
       child: AnimatedContainer(
@@ -247,8 +266,8 @@ class BrassToggle extends StatelessWidget {
         padding: const EdgeInsets.all(3),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: value ? Apothecary.brassDeep : const Color(0xFF4A3A26),
-          border: Border.all(color: Apothecary.brassBorder, width: 1.5),
+          color: value ? t.metalDeep : const Color(0xFF4A3A26),
+          border: Border.all(color: t.metalBorder, width: 1.5),
           boxShadow: const [
             BoxShadow(
                 color: Color(0x88000000), blurRadius: 3, offset: Offset(0, 2)),
@@ -259,14 +278,14 @@ class BrassToggle extends StatelessWidget {
           child: Container(
             width: 24,
             height: 24,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Apothecary.brassLight, Apothecary.brassDeep],
+                colors: [t.metalLight, t.metalDeep],
               ),
-              boxShadow: [
+              boxShadow: const [
                 BoxShadow(
                     color: Color(0x66000000),
                     blurRadius: 2,
@@ -284,19 +303,22 @@ class BrassToggle extends StatelessWidget {
 class WalnutSlider extends StatelessWidget {
   final double value;
   final ValueChanged<double> onChanged;
+  final ApothecaryThemeDef? theme;
 
-  const WalnutSlider({super.key, required this.value, required this.onChanged});
+  const WalnutSlider(
+      {super.key, required this.value, required this.onChanged, this.theme});
 
   @override
   Widget build(BuildContext context) {
+    final t = _th(theme);
     return SliderTheme(
       data: SliderThemeData(
         trackHeight: 10,
-        activeTrackColor: const Color(0xFF3A2818),
+        activeTrackColor: t.bgDeep,
         inactiveTrackColor: Apothecary.timberInset,
-        thumbColor: Apothecary.brassLight,
-        overlayColor: Apothecary.brassLight.withValues(alpha: 0.2),
-        thumbShape: const _BrassThumb(),
+        thumbColor: t.metalLight,
+        overlayColor: t.metalLight.withValues(alpha: 0.2),
+        thumbShape: _BrassThumb(t),
         trackShape: const _WalnutTrack(),
       ),
       child: Slider(value: value, onChanged: onChanged),
@@ -305,7 +327,8 @@ class WalnutSlider extends StatelessWidget {
 }
 
 class _BrassThumb extends SliderComponentShape {
-  const _BrassThumb();
+  final ApothecaryThemeDef t;
+  const _BrassThumb(this.t);
   @override
   Size getPreferredSize(bool isEnabled, bool isDiscrete) =>
       const Size(26, 26);
@@ -323,23 +346,27 @@ class _BrassThumb extends SliderComponentShape {
       required double textScaleFactor,
       required Size sizeWithOverflow}) {
     final canvas = context.canvas;
-    final grad = const LinearGradient(
+    final grad = LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
-      colors: [Apothecary.brassLight, Apothecary.brassDeep],
+      colors: [t.metalLight, t.metalDeep],
     );
     canvas.drawCircle(
-        center, 13, Paint()..shader = grad.createShader(Rect.fromCircle(center: center, radius: 13)));
+        center,
+        13,
+        Paint()
+          ..shader =
+              grad.createShader(Rect.fromCircle(center: center, radius: 13)));
     canvas.drawCircle(
       center,
       13,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
-        ..color = Apothecary.brassBorder,
+        ..color = t.metalBorder,
     );
-    canvas.drawCircle(center, 4,
-        Paint()..color = Apothecary.brassBorder.withValues(alpha: 0.7));
+    canvas.drawCircle(
+        center, 4, Paint()..color = t.metalBorder.withValues(alpha: 0.7));
   }
 }
 
@@ -382,27 +409,28 @@ class _WalnutTrack extends RoundedRectSliderTrackShape {
 class StarSeal extends StatelessWidget {
   final bool earned;
   final double size;
+  final ApothecaryThemeDef? theme;
 
-  const StarSeal({super.key, required this.earned, this.size = 44});
+  const StarSeal({super.key, required this.earned, this.size = 44, this.theme});
 
   @override
   Widget build(BuildContext context) {
+    final t = _th(theme);
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: earned
-            ? const LinearGradient(
+            ? LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Apothecary.brassLight, Apothecary.brassDeep],
+                colors: [t.metalLight, t.metalDeep],
               )
             : null,
         color: earned ? null : const Color(0xFF3A2C1C),
         border: Border.all(
-            color: earned ? Apothecary.brassBorder : const Color(0xFF2A2016),
-            width: 2),
+            color: earned ? t.metalBorder : const Color(0xFF2A2016), width: 2),
         boxShadow: earned
             ? const [
                 BoxShadow(
@@ -414,7 +442,7 @@ class StarSeal extends StatelessWidget {
       ),
       child: Icon(
         Icons.star,
-        color: earned ? Apothecary.inkBrown : const Color(0xFF241A10),
+        color: earned ? t.ink : const Color(0xFF241A10),
         size: size * 0.55,
       ),
     );

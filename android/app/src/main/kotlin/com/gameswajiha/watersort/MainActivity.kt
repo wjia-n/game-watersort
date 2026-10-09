@@ -1,4 +1,4 @@
-package com.gameswajiha.tictactoe
+package com.gameswajiha.watersort
 
 import io.flutter.embedding.android.FlutterActivity
 

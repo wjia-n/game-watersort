@@ -33,7 +33,7 @@ class AppSettings extends ChangeNotifier {
   bool customEnabled = false;
 
   /// Water Sort PRO unlock (persisted; set by the store on purchase).
-  bool isPro = false;
+  bool isPro = true; // everything unlocked
 
   SharedPreferences? _prefs;
   bool _loaded = false;
@@ -71,7 +71,7 @@ class AppSettings extends ChangeNotifier {
     customPaletteId = p.getString(_kCustomPalette) ?? 'apothecary';
     customGlassId = p.getString(_kCustomGlass) ?? 'flute';
     customEnabled = p.getBool(_kCustomOn) ?? false;
-    isPro = p.getBool(_kPro) ?? false;
+    isPro = true; // everything unlocked
     _loaded = true;
     notifyListeners();
   }

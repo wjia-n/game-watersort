@@ -239,12 +239,10 @@ class _BuyCard extends StatelessWidget {
                 return _setupNote(theme, store.error);
               }
               return Center(
-                child: BrassButton(
-                  theme: theme,
-                  label: settings.isPro
-                      ? 'PRO active'
-                      : 'Get PRO — ${p.price}',
-                  onTap: settings.isPro || busy ? null : store.buyPro,
+                child: Text(
+                  'Everything is unlocked \u2014 all bottles, themes and unlimited undo are free forever.',
+                  textAlign: TextAlign.center,
+                  style: ApothecaryText.bodyInk.copyWith(fontSize: 13),
                 ),
               );
             },

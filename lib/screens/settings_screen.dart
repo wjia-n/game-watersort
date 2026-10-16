@@ -9,6 +9,7 @@ import '../settings.dart';
 import '../themes.dart';
 import '../widgets/brass.dart';
 import '../widgets/cabinet.dart';
+import '../transfer/transfer_ui.dart';
 
 /// Apothecary settings: parchment cards with brass toggles, walnut sliders,
 /// player name, theme shortcut, difficulty tabs, reset progress, version plate.
@@ -40,6 +41,7 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              TransferSaveTile(gameSlug: 'watersort'),
               Row(
                 children: [
                   BrassIconButton(

@@ -108,12 +108,15 @@ class _ThemeScreenState extends State<ThemeScreen> {
     ApothecaryAudio.instance.clink();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('That one is PRO — unlock the full cabinet.',
+        content: Text(
+            defaultTargetPlatform == TargetPlatform.iOS
+                ? 'That one is locked for now.'
+                : 'That one is PRO — unlock the full cabinet.',
             style: ApothecaryText.engraved(13, color: _t.ink)),
         backgroundColor: _t.parchment,
         behavior: SnackBarBehavior.floating,
         action: SnackBarAction(
-          label: 'PRO',
+          label: defaultTargetPlatform == TargetPlatform.iOS ? '⭐ Gold Star' : 'PRO',
           onPressed: widget.onPro,
         ),
       ),
@@ -369,7 +372,7 @@ class _ThemeScreenState extends State<ThemeScreen> {
             const SizedBox(height: 10),
             BrassButton(
               theme: t,
-              label: 'Unlock with PRO',
+              label: defaultTargetPlatform == TargetPlatform.iOS ? '⭐ Gold Star' : 'Unlock with PRO',
               fontSize: 13,
               onTap: () {
                 ApothecaryAudio.instance.click();

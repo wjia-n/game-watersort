@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -126,16 +127,16 @@ class SettingsScreen extends StatelessWidget {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                        s.isPro
+                                        defaultTargetPlatform == TargetPlatform.iOS ? '⭐ Gold Star' : (s.isPro
                                             ? 'PRO active'
-                                            : 'Water Sort PRO',
+                                            : 'Water Sort PRO'),
                                         style: ApothecaryText.engraved(
                                             14, color: th.ink)),
                                   ),
                                   const SizedBox(width: 8),
                                   ParchmentTag(
                                     theme: th,
-                                    label: s.isPro ? 'View' : 'Get PRO',
+                                    label: defaultTargetPlatform == TargetPlatform.iOS ? '⭐ Gold Star' : (s.isPro ? 'View' : 'Get PRO'),
                                     icon: Icons.star,
                                     highlighted: !s.isPro,
                                     onTap: () {

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../apothecary.dart';
@@ -83,7 +84,7 @@ class _ThemeScreenState extends State<ThemeScreen> {
                     const SizedBox(height: 8),
                     _glassList(s, t),
                     const SizedBox(height: 18),
-                    _sectionTitle(t, 'CUSTOM BLEND (PRO)'),
+                    _sectionTitle(t, defaultTargetPlatform == TargetPlatform.iOS ? 'CUSTOM BLEND' : 'CUSTOM BLEND (PRO)'),
                     const SizedBox(height: 8),
                     _customCreator(s, t),
                     const SizedBox(height: 24),

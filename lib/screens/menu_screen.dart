@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -231,7 +232,7 @@ class MenuScreen extends StatelessWidget {
                       ),
                       ParchmentTag(
                         theme: th,
-                        label: s.isPro ? 'PRO ✓' : 'PRO',
+                        label: defaultTargetPlatform == TargetPlatform.iOS ? '⭐ Gold Star' : (s.isPro ? 'PRO ✓' : 'PRO'),
                         icon: Icons.star,
                         highlighted: !s.isPro,
                         onTap: () {
